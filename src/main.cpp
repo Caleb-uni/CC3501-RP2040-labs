@@ -1,39 +1,88 @@
 #include <stdio.h>
 #include "pico/stdlib.h"
-#include "hardware/gpio.h"
-#include "hardware/pio.h"
+#include "drivers/leds.h"
+#include "drivers/accell.h"
+#include "drivers/mic.h"
 
-#include "WS2812.pio.h" // This header file gets produced during compilation from the WS2812.pio file
-#include "drivers/logging/logging.h"
+#define ACCEL_SENSITIVITY 0.004f
+#define NUM_SAMPLES 256
 
-#define LED_PIN 14
-
-int main()
-{
+int main() {
     stdio_init_all();
+    
+    LED_INIT();
+    LIS3DH_init();     // Accelerometer init
+    MIC_INIT();        // Microphone init
 
-    // Initialise PIO0 to control the LED chain
-    uint pio_program_offset = pio_add_program(pio0, &ws2812_program);
-    ws2812_program_init(pio0, 0, pio_program_offset, LED_PIN, 800000, false);
-    uint32_t led_data [1];
+    printf("Accelerometer + MIC demo starting...\n");
 
-    for (;;) {
-        // Test the log system
-        log(LogLevel::INFORMATION, "Hello world");
+    int mode = 1; // 0 = LED test, 1 = accelerometer, 2 = MIC
+    uint16_t mic_buffer[NUM_SAMPLES];
 
-        // Turn on the first LED to be a certain colour
-        uint8_t red = 0;
-        uint8_t green = 0;
-        uint8_t blue = 255;
-        led_data[0] = (red << 24) | (green << 16) | (blue << 8);
-        pio_sm_put_blocking(pio0, 0, led_data[0]);
-        sleep_ms(500);
+    while (true) {
+        if (mode == 0) {
+            // LED Test Pattern
+            LED_SET_ALL(255, 0, 0);
+            sleep_ms(500);
 
-        // Set the first LED off 
-        led_data[0] = 0;
-        pio_sm_put_blocking(pio0, 0, led_data[0]);
-        sleep_ms(500);
+            LED_SET_ALL(0, 255, 0);
+            sleep_ms(500);
+
+            LED_SET_ALL(0, 0, 255);
+            sleep_ms(500);
+
+            LED_CLEAR();
+            LED_SET_IND(0, 255, 0, 0);
+            LED_SET_IND(1, 0, 255, 0);
+            LED_SET_IND(2, 0, 0, 255);
+            LED_UPDATE();
+            sleep_ms(1000);
+
+            LED_CLEAR();
+            sleep_ms(500);
+
+        } else if (mode == 1) {
+            // Accelerometer Mode
+            LIS3DH_updateReadings();  // Read new accelerometer data
+
+            float gx = values.x * ACCEL_SENSITIVITY;
+            float gy = values.y * ACCEL_SENSITIVITY;
+            float gz = values.z * ACCEL_SENSITIVITY;
+
+            LED_CLEAR();
+
+            if (gx > 0.3f) {
+                LED_SET_IND(0, 255, 0, 0);     // Tilted right → Red
+            } else if (gx < -0.3f) {
+                LED_SET_IND(1, 0, 255, 0);     // Tilted left → Green
+            } else if (gy > 0.3f) {
+                LED_SET_IND(2, 0, 0, 255);     // Tilted forward → Blue
+            } else if (gy < -0.3f) {
+                LED_SET_IND(3, 255, 255, 0);   // Tilted back → Yellow
+            } else {
+                LED_SET_IND(4, 255, 255, 255); // Flat → White
+            }
+
+            LED_UPDATE();
+            sleep_ms(200);
+
+        } else if (mode == 2) {
+            // Microphone Mode
+            MIC_READ(mic_buffer, NUM_SAMPLES);
+
+            // Find peak value in sample
+            uint16_t peak = 0;
+            for (int i = 0; i < NUM_SAMPLES; ++i) {
+                if (mic_buffer[i] > peak) peak = mic_buffer[i];
+            }
+
+            // Normalize 12-bit ADC (0-4095)
+            float norm = peak / 4095.0f;
+            uint8_t brightness = (uint8_t)(norm * 255.0f);
+
+            // Set LEDs based on volume (yellow hue)
+            LED_SET_ALL(brightness, brightness, 0);
+            sleep_ms(50);
+        }
     }
-
-    return 0;
 }
